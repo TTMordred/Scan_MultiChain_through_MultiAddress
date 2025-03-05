@@ -2,15 +2,16 @@ import React, { useState } from 'react';
 import { ChainPortfolio, SUPPORTED_CHAINS } from '../types';
 import PortfolioTable from './PortfolioTable';
 import ChainSelector from './ChainSelector';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, Download } from 'lucide-react';
+import { generateCsv, downloadFile } from '../utils/chainUtils';
 
 interface MultiChainPortfolioTableProps {
-  address: string;
-  onScanChain: (address: string, chainKey: string) => Promise<ChainPortfolio>;
+  addresses: string[];
+  onScanChain: (addresses: string[], chainKey: string) => Promise<ChainPortfolio>;
 }
 
 const MultiChainPortfolioTable: React.FC<MultiChainPortfolioTableProps> = ({ 
-  address, 
+  addresses, 
   onScanChain 
 }) => {
   const [selectedChains, setSelectedChains] = useState<string[]>(['SUI', 'ETH']);
@@ -31,7 +32,7 @@ const MultiChainPortfolioTable: React.FC<MultiChainPortfolioTableProps> = ({
     setErrors(prev => ({ ...prev, [chainKey]: '' }));
 
     try {
-      const result = await onScanChain(address, chainKey);
+      const result = await onScanChain(addresses, chainKey);
       setPortfolios(prev => {
         const filtered = prev.filter(p => p.chain !== chainKey);
         return [...filtered, result];
@@ -52,6 +53,12 @@ const MultiChainPortfolioTable: React.FC<MultiChainPortfolioTableProps> = ({
     });
   };
 
+  const handleExportCsv = () => {
+    if (portfolios.length === 0) return;
+    const csvContent = generateCsv(portfolios);
+    downloadFile(csvContent, 'multi_chain_portfolio.csv', 'text/csv');
+  };
+
   // Calculate total balance across all chains in USD
   const totalBalance = portfolios.reduce(
     (sum, portfolio) => sum + parseFloat(portfolio.totalBalance),
@@ -64,35 +71,45 @@ const MultiChainPortfolioTable: React.FC<MultiChainPortfolioTableProps> = ({
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col items-center mb-8">
         <h1 className="text-3xl font-bold mb-4">Multi-Chain Portfolio Scanner</h1>
-        <p className="text-gray-600 mb-6">Select chains to scan your portfolio</p>
+        <p className="text-gray-600 mb-6">Scanning {addresses.length} addresses across selected chains</p>
 
         <ChainSelector
           selectedChains={selectedChains}
           onChainToggle={handleChainToggle}
         />
 
-        <button
-          onClick={handleScanSelected}
-          disabled={selectedChains.length === 0 || activeScanCount > 0}
-          className={`
-            px-6 py-3 rounded-lg text-white font-semibold mb-8
-            ${selectedChains.length === 0 || activeScanCount > 0
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-700'
-            }
-            transition-colors flex items-center space-x-2
-          `}
-        >
-          {activeScanCount > 0 && (
-            <Loader2 className="h-5 w-5 animate-spin" />
+        <div className="flex space-x-4 mb-8">
+          <button
+            onClick={handleScanSelected}
+            disabled={selectedChains.length === 0 || activeScanCount > 0}
+            className={`
+              px-6 py-3 rounded-lg text-white font-semibold
+              ${selectedChains.length === 0 || activeScanCount > 0
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700'
+              }
+              transition-colors flex items-center space-x-2
+            `}
+          >
+            {activeScanCount > 0 && <Loader2 className="h-5 w-5 animate-spin" />}
+            <span>
+              {activeScanCount > 0
+                ? `Scanning ${activeScanCount} Chain(s)...`
+                : `Scan Selected Chains (${selectedChains.length})`
+              }
+            </span>
+          </button>
+
+          {portfolios.length > 0 && (
+            <button
+              onClick={handleExportCsv}
+              className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition-colors flex items-center space-x-2"
+            >
+              <Download className="h-5 w-5" />
+              <span>Export CSV</span>
+            </button>
           )}
-          <span>
-            {activeScanCount > 0
-              ? `Scanning ${activeScanCount} Chain(s)...`
-              : `Scan Selected Chains (${selectedChains.length})`
-            }
-          </span>
-        </button>
+        </div>
 
         {Object.entries(errors).map(([chain, error]) => (
           error && (

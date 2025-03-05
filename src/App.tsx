@@ -7,31 +7,46 @@ import { Account, ChainPortfolio } from './types';
 import { Wallet } from 'lucide-react';
 
 function App() {
-  const [address, setAddress] = useState<string>('');
+  const [addresses, setAddresses] = useState<string[]>([]);
 
-  const handleAddressesLoaded = async (addresses: string[]) => {
-    if (addresses.length > 0) {
-      setAddress(addresses[0]);
-    }
+  const handleAddressesLoaded = async (newAddresses: string[]) => {
+    setAddresses(newAddresses);
   };
 
-  const handleScanChain = async (address: string, chainKey: string): Promise<ChainPortfolio> => {
+  const handleScanChain = async (addresses: string[], chainKey: string): Promise<ChainPortfolio> => {
     if (chainKey === 'SUI') {
-      // Handle SUI chain scanning
+      // Handle SUI chain scanning for multiple addresses
       try {
-        const balances = await getSuiBalance(address);
-        const account: Account = {
-          address,
-          balances,
-          loading: false,
-          chain: 'SUI'
-        };
+        const accounts: Account[] = await Promise.all(
+          addresses.map(async (address) => {
+            try {
+              const balances = await getSuiBalance(address);
+              return {
+                address,
+                balances,
+                loading: false,
+                chain: 'SUI'
+              };
+            } catch (error) {
+              return {
+                address,
+                balances: [],
+                loading: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                chain: 'SUI'
+              };
+            }
+          })
+        );
         
-        const totalBalance = balances
-          .find(b => b.symbol === 'SUI')?.balance || '0';
+        // Calculate total balance across all addresses
+        const totalBalance = accounts.reduce((sum, account) => {
+          const suiBalance = account.balances.find(b => b.symbol === 'SUI')?.balance || '0';
+          return sum + parseFloat(suiBalance);
+        }, 0).toFixed(4);
 
         return {
-          accounts: [account],
+          accounts,
           totalBalance,
           chain: 'SUI'
         };
@@ -40,7 +55,7 @@ function App() {
       }
     } else {
       // Handle other chains using chainUtils
-      return await scanChainPortfolio(chainKey, address);
+      return await scanChainPortfolio(chainKey, addresses);
     }
   };
 
@@ -59,9 +74,9 @@ function App() {
         
         <AddressInput onAddressesLoaded={handleAddressesLoaded} />
 
-        {address && (
+        {addresses.length > 0 && (
           <MultiChainPortfolioTable 
-            address={address}
+            addresses={addresses}
             onScanChain={handleScanChain}
           />
         )}

@@ -8,8 +8,13 @@ const ERC20_ABI = [
 ];
 
 async function getEthBalance(provider: ethers.JsonRpcProvider, address: string): Promise<string> {
-  const balance = await provider.getBalance(address);
-  return ethers.formatEther(balance);
+  try {
+    const balance = await provider.getBalance(address);
+    return ethers.formatEther(balance);
+  } catch (error) {
+    console.error(`Error fetching ETH balance for ${address}:`, error);
+    throw error;
+  }
 }
 
 async function getTokenBalance(
@@ -22,7 +27,10 @@ async function getTokenBalance(
     contract.balanceOf(walletAddress),
     contract.decimals(),
     contract.symbol()
-  ]);
+  ]).catch(error => {
+    console.error(`Error fetching token balance for ${tokenAddress}:`, error);
+    throw error;
+  });
   
   return {
     balance: ethers.formatUnits(balance, decimals),
@@ -46,13 +54,6 @@ const COMMON_TOKENS: Record<string, string[]> = {
     '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6', // WBTC
     '0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39'  // LINK
   ],
-  OPTIMISM: [
-    '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', // USDT
-    '0x7F5c764cBc14f9669B88837ca1490cCa17c31607', // USDC
-    '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1', // DAI
-    '0x68f180fcCe6836688e9084f035309E29Bf0A2095', // WBTC
-    '0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6'  // LINK
-  ],
   ARBITRUM: [
     '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', // USDT
     '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', // USDC
@@ -67,22 +68,79 @@ const COMMON_TOKENS: Record<string, string[]> = {
     '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c', // WBTC
     '0x404460C6A5EdE2D891e8297795264fDe62ADBB75'  // LINK
   ],
-  AVALANCHE: [
-    '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', // USDT
-    '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', // USDC
-    '0xd586E7F844cEa2F87f50152665BCbc2C279D8d70', // DAI
-    '0x50b7545627a5162F82A992c33b87aDc75187B218', // WBTC
-    '0x5947BB275c521040051D82396192181b413227A3'  // LINK
-  ],
-  BASE: [
-    '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', // DAI
-    '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA' // USD+
+  OPTIMISM: [
+    '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', // USDT
+    '0x7F5c764cBc14f9669B88837ca1490cCa17c31607', // USDC
+    '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1', // DAI
+    '0x68f180fcCe6836688e9084f035309E29Bf0A2095', // WBTC
+    '0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6'  // LINK
   ]
 };
 
+async function scanAddress(
+  provider: ethers.JsonRpcProvider,
+  address: string,
+  chainKey: string
+): Promise<Account> {
+  try {
+    // Get native token balance
+    const nativeBalance = await getEthBalance(provider, address);
+    const account: Account = {
+      address,
+      balances: [{
+        coinType: 'native',
+        symbol: SUPPORTED_CHAINS[chainKey].symbol,
+        balance: nativeBalance,
+        decimals: 18,
+        chain: chainKey
+      }],
+      loading: false,
+      chain: chainKey
+    };
+
+    // Get common token balances
+    const tokenAddresses = COMMON_TOKENS[chainKey] || [];
+    const tokenPromises = tokenAddresses.map(async (tokenAddress) => {
+      try {
+        const tokenData = await getTokenBalance(provider, tokenAddress, address);
+        return {
+          coinType: tokenAddress,
+          ...tokenData,
+          chain: chainKey
+        };
+      } catch (error) {
+        console.error(`Error fetching token balance for ${tokenAddress}:`, error);
+        return null;
+      }
+    });
+
+    // Wait for all token balances with a timeout
+    const tokenBalances = await Promise.all(
+      tokenPromises.map(promise => 
+        Promise.race([
+          promise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)) // 10s timeout
+        ])
+      )
+    );
+
+    // Add valid token balances
+    account.balances.push(...tokenBalances.filter((b): b is NonNullable<typeof b> => b !== null));
+    return account;
+  } catch (error) {
+    return {
+      address,
+      balances: [],
+      loading: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      chain: chainKey
+    };
+  }
+}
+
 export async function scanChainPortfolio(
   chainKey: string,
-  address: string
+  addresses: string[]
 ): Promise<ChainPortfolio> {
   const chainConfig = SUPPORTED_CHAINS[chainKey];
   if (!chainConfig) {
@@ -90,90 +148,87 @@ export async function scanChainPortfolio(
   }
 
   const provider = new ethers.JsonRpcProvider(chainConfig.rpcUrl);
-  const account: Account = {
-    address,
-    balances: [],
-    loading: true,
-    error: undefined,
+  
+  // Scan all addresses concurrently with batching
+  const batchSize = 3; // Process 3 addresses at a time to avoid rate limits
+  const accounts: Account[] = [];
+  
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    const batch = addresses.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(address => scanAddress(provider, address, chainKey))
+    );
+    accounts.push(...batchResults);
+  }
+
+  // Calculate total balance (sum of native token balances)
+  const totalBalance = accounts.reduce((sum, account) => {
+    const nativeBalance = account.balances.find(b => b.coinType === 'native')?.balance || '0';
+    return sum + parseFloat(nativeBalance);
+  }, 0).toString();
+
+  return {
+    accounts,
+    totalBalance,
     chain: chainKey
   };
-
-  try {
-    // Get native token balance
-    const nativeBalance = await getEthBalance(provider, address);
-    account.balances.push({
-      coinType: 'native',
-      symbol: chainConfig.symbol,
-      balance: nativeBalance,
-      decimals: 18,
-      chain: chainKey
-    });
-
-    // Get common token balances
-    const tokenAddresses = COMMON_TOKENS[chainKey] || [];
-    const tokenBalances = await Promise.all(
-      tokenAddresses.map(async (tokenAddress) => {
-        try {
-          const tokenData = await getTokenBalance(provider, tokenAddress, address);
-          return {
-            coinType: tokenAddress,
-            ...tokenData,
-            chain: chainKey
-          };
-        } catch (error) {
-          console.error(`Error fetching token balance for ${tokenAddress}:`, error);
-          return null;
-        }
-      })
-    );
-
-    // Add valid token balances
-    account.balances.push(...tokenBalances.filter((b): b is NonNullable<typeof b> => b !== null));
-    account.loading = false;
-
-    // Calculate total balance in native tokens (simplified)
-    const totalBalance = nativeBalance;
-
-    return {
-      accounts: [account],
-      totalBalance,
-      chain: chainKey
-    };
-  } catch (error) {
-    account.loading = false;
-    account.error = error instanceof Error ? error.message : 'Unknown error';
-    return {
-      accounts: [account],
-      totalBalance: '0',
-      chain: chainKey
-    };
-  }
 }
 
-export async function scanAllChains(address: string): Promise<ChainPortfolio[]> {
-  const chainKeys = Object.keys(SUPPORTED_CHAINS);
-  
-  // Scan all chains concurrently
-  const portfolios = await Promise.all(
-    chainKeys.map(async (chainKey) => {
-      try {
-        return await scanChainPortfolio(chainKey, address);
-      } catch (error) {
-        console.error(`Error scanning ${chainKey}:`, error);
-        return {
-          accounts: [{
-            address,
-            balances: [],
-            loading: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            chain: chainKey
-          }],
-          totalBalance: '0',
-          chain: chainKey
-        };
-      }
-    })
-  );
+export function generateCsv(portfolios: ChainPortfolio[]): string {
+  // Get all unique tokens across all chains
+  const tokenMap = new Map<string, Set<string>>(); // chain -> set of symbols
 
-  return portfolios;
+  portfolios.forEach(portfolio => {
+    portfolio.accounts.forEach(account => {
+      if (!tokenMap.has(account.chain)) {
+        tokenMap.set(account.chain, new Set());
+      }
+      account.balances.forEach(balance => {
+        tokenMap.get(account.chain)!.add(balance.symbol);
+      });
+    });
+  });
+
+  // Create CSV header
+  const csvHeader = ['Address'];
+  tokenMap.forEach((symbols, chain) => {
+    symbols.forEach(symbol => {
+      csvHeader.push(`${chain}_${symbol}`);
+    });
+  });
+
+  // Create rows
+  const allAddresses = new Set(portfolios.flatMap(p => p.accounts.map(a => a.address)));
+  const rows = Array.from(allAddresses).map(address => {
+    const row = [address];
+    tokenMap.forEach((symbols, chain) => {
+      const account = portfolios
+        .find(p => p.chain === chain)
+        ?.accounts.find(a => a.address === address);
+      
+      symbols.forEach(symbol => {
+        const balance = account?.balances.find(b => b.symbol === symbol)?.balance || '0';
+        row.push(balance);
+      });
+    });
+    return row;
+  });
+
+  // Combine header and rows
+  return [
+    csvHeader.join(','),
+    ...rows.map(row => row.join(','))
+  ].join('\n');
+}
+
+export function downloadFile(content: string, fileName: string, contentType: string): void {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
