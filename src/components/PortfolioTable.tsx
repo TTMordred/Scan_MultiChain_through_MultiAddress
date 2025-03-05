@@ -1,14 +1,16 @@
 import React, { useMemo } from 'react';
-import { SuiAccount } from '../types';
+import { Account } from '../types';
 import { formatAddress, generateCsv, downloadFile } from '../utils/suiUtils';
 import { ExternalLink, Loader2, Download, ArrowUpDown } from 'lucide-react';
 
 interface PortfolioTableProps {
-  accounts: SuiAccount[];
+  accounts: Account[];
   totalBalance: string;
+  chain: string;
+  explorerUrl?: string;
 }
 
-const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance }) => {
+const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance, chain, explorerUrl }) => {
   // Get all unique coin symbols across all accounts
   const uniqueSymbols = useMemo(() => {
     const symbols = new Set<string>();
@@ -24,22 +26,22 @@ const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance 
     return null;
   }
 
-  // Sort accounts by SUI balance (highest to lowest)
+  // Sort accounts by native token balance (highest to lowest)
   const sortedAccounts = [...accounts].sort((a, b) => {
-    const balanceA = a.balances.find(b => b.symbol === 'SUI')?.balance || '0';
-    const balanceB = b.balances.find(b => b.symbol === 'SUI')?.balance || '0';
+    const balanceA = a.balances.find((bal) => bal.symbol === chain)?.balance || '0';
+    const balanceB = b.balances.find((bal) => bal.symbol === chain)?.balance || '0';
     return parseFloat(balanceB) - parseFloat(balanceA);
   });
 
   const handleExportCsv = () => {
     const csvContent = generateCsv(accounts);
-    downloadFile(csvContent, 'sui_portfolio.csv', 'text/csv');
+    downloadFile(csvContent, `${chain.toLowerCase()}_portfolio.csv`, 'text/csv');
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
+    <div className="w-full max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6 mb-8">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">SUI Portfolio</h2>
+        <h2 className="text-xl font-semibold">{chain} Portfolio</h2>
         <button
           onClick={handleExportCsv}
           className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center"
@@ -51,7 +53,7 @@ const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance 
       
       <div className="mb-6 p-4 bg-blue-50 rounded-lg">
         <p className="text-lg">
-          Total Balance: <span className="font-bold">{totalBalance} SUI</span>
+          Total Balance: <span className="font-bold">{totalBalance} {chain}</span>
         </p>
       </div>
       
@@ -73,7 +75,7 @@ const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance 
                 >
                   <div className="flex items-center">
                     {symbol}
-                    {symbol === 'SUI' && <ArrowUpDown className="h-3 w-3 ml-1" />}
+                    {symbol === chain && <ArrowUpDown className="h-3 w-3 ml-1" />}
                   </div>
                 </th>
               ))}
@@ -102,14 +104,14 @@ const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance 
                       <span className="text-red-500">Error: {account.error}</span>
                     ) : (
                       <span>
-                        {account.balances.find(b => b.symbol === symbol)?.balance || '0.0000'} {symbol}
+                        {account.balances.find((bal) => bal.symbol === symbol)?.balance || '0.0000'} {symbol}
                       </span>
                     )}
                   </td>
                 ))}
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   <a 
-                    href={`https://explorer.sui.io/address/${account.address}`} 
+                    href={`${explorerUrl}/address/${account.address}`}
                     target="_blank" 
                     rel="noopener noreferrer"
                     className="text-blue-600 hover:text-blue-800 inline-flex items-center"

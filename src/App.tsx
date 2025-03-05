@@ -1,138 +1,70 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import AddressInput from './components/AddressInput';
-import PortfolioTable from './components/PortfolioTable';
+import MultiChainPortfolioTable from './components/MultiChainPortfolioTable';
+import { scanChainPortfolio } from './utils/chainUtils';
 import { getSuiBalance } from './utils/suiUtils';
-import { SuiAccount } from './types';
+import { Account, ChainPortfolio } from './types';
 import { Wallet } from 'lucide-react';
 
-interface AccountWithRetry extends SuiAccount {
-  retryCount: number;
-}
-
 function App() {
-  const [accounts, setAccounts] = useState<SuiAccount[]>([]);
-  const [totalBalance, setTotalBalance] = useState<string>('0.0000');
+  const [address, setAddress] = useState<string>('');
 
   const handleAddressesLoaded = async (addresses: string[]) => {
-    // Initialize accounts with loading state
-    const initialAccounts: AccountWithRetry[] = addresses.map(address => ({
-      address,
-      loading: true,
-      balances: [],
-      retryCount: 0,
-    }));
-    
-    setAccounts(initialAccounts);
-    
-    // Process addresses in batches of 50
-    const BATCH_SIZE = 50;
-    const DELAY_BETWEEN_BATCHES = 2000; // 2 seconds delay between batches
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY = 5000; // 5 seconds delay before retrying
-    const updatedAccounts = [...initialAccounts];
-    
-    const processAddress = async (address: string, retryCount: number): Promise<AccountWithRetry> => {
-      try {
-        const balances = await getSuiBalance(address);
-        return {
-          address,
-          balances,
-          loading: false,
-          retryCount,
-        };
-      } catch {
-        if (retryCount < MAX_RETRIES) {
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-          return processAddress(address, retryCount + 1);
-        }
-        return {
-          address,
-          loading: false,
-          balances: [],
-          error: 'Failed to fetch balance',
-          retryCount,
-        };
-      }
-    };
-
-    // First pass: process all addresses
-    for (let i = 0; i < addresses.length; i += BATCH_SIZE) {
-      const batch = addresses.slice(i, i + BATCH_SIZE);
-      
-      const batchResults = await Promise.all(
-        batch.map(address => processAddress(address, 0))
-      );
-      
-      batchResults.forEach(result => {
-        const index = updatedAccounts.findIndex(a => a.address === result.address);
-        if (index !== -1) {
-          updatedAccounts[index] = result;
-        }
-      });
-      
-      setAccounts([...updatedAccounts]);
-      
-      if (i + BATCH_SIZE < addresses.length) {
-        await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES));
-      }
-    }
-
-    // Filter failed addresses that haven't reached max retries
-    const failedAddresses = updatedAccounts.filter(
-      account => account.error && account.retryCount < MAX_RETRIES
-    );
-
-    // Retry failed addresses if any exist
-    if (failedAddresses.length > 0) {
-      const retryResults = await Promise.all(
-        failedAddresses.map(account => 
-          processAddress(account.address, account.retryCount)
-        )
-      );
-
-      retryResults.forEach(result => {
-        const index = updatedAccounts.findIndex(a => a.address === result.address);
-        if (index !== -1) {
-          updatedAccounts[index] = result;
-        }
-      });
-
-      setAccounts([...updatedAccounts]);
+    if (addresses.length > 0) {
+      setAddress(addresses[0]);
     }
   };
 
-  // Calculate total SUI balance whenever accounts change
-  useEffect(() => {
-    const total = accounts.reduce((sum, account) => {
-      const suiBalance = account.balances.find(b => b.symbol === 'SUI');
-      if (suiBalance) {
-        return sum + parseFloat(suiBalance.balance);
+  const handleScanChain = async (address: string, chainKey: string): Promise<ChainPortfolio> => {
+    if (chainKey === 'SUI') {
+      // Handle SUI chain scanning
+      try {
+        const balances = await getSuiBalance(address);
+        const account: Account = {
+          address,
+          balances,
+          loading: false,
+          chain: 'SUI'
+        };
+        
+        const totalBalance = balances
+          .find(b => b.symbol === 'SUI')?.balance || '0';
+
+        return {
+          accounts: [account],
+          totalBalance,
+          chain: 'SUI'
+        };
+      } catch (error) {
+        throw new Error(`Failed to scan SUI chain: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
-      return sum;
-    }, 0);
-    
-    setTotalBalance(total.toFixed(4));
-  }, [accounts]);
+    } else {
+      // Handle other chains using chainUtils
+      return await scanChainPortfolio(chainKey, address);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <header className="mb-10 text-center">
           <div className="flex items-center justify-center mb-4">
             <Wallet className="h-10 w-10 text-blue-600 mr-2" />
-            <h1 className="text-3xl font-bold text-gray-800">SUI Portfolio Tracker</h1>
+            <h1 className="text-3xl font-bold text-gray-800">Multi-Chain Portfolio Tracker</h1>
           </div>
           <p className="text-gray-600">
-            Track your SUI wallet balances in one place
+            Track your crypto portfolio across multiple blockchains
           </p>
         </header>
         
         <AddressInput onAddressesLoaded={handleAddressesLoaded} />
-        
-        <PortfolioTable 
-          accounts={accounts} 
-          totalBalance={totalBalance}
-        />
+
+        {address && (
+          <MultiChainPortfolioTable 
+            address={address}
+            onScanChain={handleScanChain}
+          />
+        )}
       </div>
     </div>
   );
