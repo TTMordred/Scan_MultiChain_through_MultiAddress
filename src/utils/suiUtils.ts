@@ -4,12 +4,6 @@ import { CoinBalance, SuiAccount } from '../types';
 // Initialize SUI client
 const client = new SuiClient({ url: getFullnodeUrl('mainnet') });
 
-// Common coin types
-const COIN_TYPES = {
-  SUI: '0x2::sui::SUI',
-  // Add more coin types here as needed
-};
-
 /**
  * Get all coin balances for a specific address
  */
@@ -21,10 +15,12 @@ export const getSuiBalance = async (address: string): Promise<CoinBalance[]> => 
     const balances: CoinBalance[] = allCoins.data
       .filter(coin => BigInt(coin.balance) > BigInt(0)) // Only include coins with balance > 0
       .map(coin => {
-        const decimals = coin.coinType === COIN_TYPES.SUI ? 9 : 9; // Default to 9 decimals
+        const decimals = 9; // Most Sui tokens use 9 decimals
         const balance = (Number(coin.balance) / Math.pow(10, decimals)).toFixed(4);
-        const symbol = coin.coinType === COIN_TYPES.SUI ? 'SUI' : 
-          coin.coinType.split('::').pop() || coin.coinType;
+        
+        // Extract symbol from coin type (e.g., "0x2::sui::SUI" -> "SUI")
+        const parts = coin.coinType.split('::');
+        const symbol = parts.length > 2 ? parts[2] : parts[parts.length - 1];
 
         return {
           coinType: coin.coinType,
