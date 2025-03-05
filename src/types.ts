@@ -1,6 +1,13 @@
+export interface CoinBalance {
+  coinType: string;
+  symbol: string;
+  balance: string;
+  decimals: number;
+}
+
 export interface SuiAccount {
   address: string;
-  balance?: string;
+  balances: CoinBalance[];
   loading: boolean;
   error?: string;
 }

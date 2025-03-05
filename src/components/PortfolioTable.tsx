@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { SuiAccount } from '../types';
 import { formatAddress, generateCsv, downloadFile } from '../utils/suiUtils';
 import { ExternalLink, Loader2, Download, ArrowUpDown } from 'lucide-react';
@@ -9,15 +9,26 @@ interface PortfolioTableProps {
 }
 
 const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance }) => {
+  // Get all unique coin symbols across all accounts
+  const uniqueSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    accounts.forEach(account => {
+      account.balances.forEach(balance => {
+        symbols.add(balance.symbol);
+      });
+    });
+    return Array.from(symbols).sort();
+  }, [accounts]);
+
   if (accounts.length === 0) {
     return null;
   }
 
-  // Sort accounts by balance (highest to lowest)
+  // Sort accounts by SUI balance (highest to lowest)
   const sortedAccounts = [...accounts].sort((a, b) => {
-    const balanceA = a.balance ? parseFloat(a.balance) : 0;
-    const balanceB = b.balance ? parseFloat(b.balance) : 0;
-    return balanceB - balanceA;
+    const balanceA = a.balances.find(b => b.symbol === 'SUI')?.balance || '0';
+    const balanceB = b.balances.find(b => b.symbol === 'SUI')?.balance || '0';
+    return parseFloat(balanceB) - parseFloat(balanceA);
   });
 
   const handleExportCsv = () => {
@@ -54,12 +65,18 @@ const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance 
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Address
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                <div className="flex items-center">
-                  Balance
-                  <ArrowUpDown className="h-3 w-3 ml-1" />
-                </div>
-              </th>
+              {uniqueSymbols.map(symbol => (
+                <th 
+                  key={symbol} 
+                  scope="col" 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  <div className="flex items-center">
+                    {symbol}
+                    {symbol === 'SUI' && <ArrowUpDown className="h-3 w-3 ml-1" />}
+                  </div>
+                </th>
+              ))}
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Actions
               </th>
@@ -74,18 +91,22 @@ const PortfolioTable: React.FC<PortfolioTableProps> = ({ accounts, totalBalance 
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                   {formatAddress(account.address)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {account.loading ? (
-                    <div className="flex items-center">
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      <span>Loading...</span>
-                    </div>
-                  ) : account.error ? (
-                    <span className="text-red-500">Error: {account.error}</span>
-                  ) : (
-                    <span>{account.balance} SUI</span>
-                  )}
-                </td>
+                {uniqueSymbols.map(symbol => (
+                  <td key={symbol} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {account.loading ? (
+                      <div className="flex items-center">
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        <span>Loading...</span>
+                      </div>
+                    ) : account.error ? (
+                      <span className="text-red-500">Error: {account.error}</span>
+                    ) : (
+                      <span>
+                        {account.balances.find(b => b.symbol === symbol)?.balance || '0.0000'} {symbol}
+                      </span>
+                    )}
+                  </td>
+                ))}
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   <a 
                     href={`https://explorer.sui.io/address/${account.address}`} 

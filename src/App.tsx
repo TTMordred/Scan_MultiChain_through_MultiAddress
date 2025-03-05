@@ -7,7 +7,6 @@ import { Wallet } from 'lucide-react';
 
 interface AccountWithRetry extends SuiAccount {
   retryCount: number;
-  error?: string;
 }
 
 function App() {
@@ -19,6 +18,7 @@ function App() {
     const initialAccounts: AccountWithRetry[] = addresses.map(address => ({
       address,
       loading: true,
+      balances: [],
       retryCount: 0,
     }));
     
@@ -33,10 +33,10 @@ function App() {
     
     const processAddress = async (address: string, retryCount: number): Promise<AccountWithRetry> => {
       try {
-        const balance = await getSuiBalance(address);
+        const balances = await getSuiBalance(address);
         return {
           address,
-          balance,
+          balances,
           loading: false,
           retryCount,
         };
@@ -48,6 +48,7 @@ function App() {
         return {
           address,
           loading: false,
+          balances: [],
           error: 'Failed to fetch balance',
           retryCount,
         };
@@ -100,11 +101,12 @@ function App() {
     }
   };
 
-  // Calculate total balance whenever accounts change
+  // Calculate total SUI balance whenever accounts change
   useEffect(() => {
     const total = accounts.reduce((sum, account) => {
-      if (account.balance) {
-        return sum + parseFloat(account.balance);
+      const suiBalance = account.balances.find(b => b.symbol === 'SUI');
+      if (suiBalance) {
+        return sum + parseFloat(suiBalance.balance);
       }
       return sum;
     }, 0);
@@ -129,7 +131,7 @@ function App() {
         
         <PortfolioTable 
           accounts={accounts} 
-          totalBalance={totalBalance} 
+          totalBalance={totalBalance}
         />
       </div>
     </div>

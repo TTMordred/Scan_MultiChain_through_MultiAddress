@@ -1,20 +1,40 @@
 import { SuiClient, getFullnodeUrl } from '@mysten/sui.js/client';
+import { CoinBalance, SuiAccount } from '../types';
 
 // Initialize SUI client
 const client = new SuiClient({ url: getFullnodeUrl('mainnet') });
 
+// Common coin types
+const COIN_TYPES = {
+  SUI: '0x2::sui::SUI',
+  // Add more coin types here as needed
+};
+
 /**
- * Get the SUI balance for a specific address
+ * Get all coin balances for a specific address
  */
-export const getSuiBalance = async (address: string): Promise<string> => {
+export const getSuiBalance = async (address: string): Promise<CoinBalance[]> => {
   try {
-    const balance = await client.getBalance({
-      owner: address,
-    });
+    const allCoins = await client.getAllCoins({ owner: address });
     
-    // Convert balance from MIST to SUI (1 SUI = 10^9 MIST)
-    const suiBalance = Number(balance.totalBalance) / 10**9;
-    return suiBalance.toFixed(4);
+    // Map coins to CoinBalance format
+    const balances: CoinBalance[] = allCoins.data
+      .filter(coin => BigInt(coin.balance) > BigInt(0)) // Only include coins with balance > 0
+      .map(coin => {
+        const decimals = coin.coinType === COIN_TYPES.SUI ? 9 : 9; // Default to 9 decimals
+        const balance = (Number(coin.balance) / Math.pow(10, decimals)).toFixed(4);
+        const symbol = coin.coinType === COIN_TYPES.SUI ? 'SUI' : 
+          coin.coinType.split('::').pop() || coin.coinType;
+
+        return {
+          coinType: coin.coinType,
+          symbol,
+          balance,
+          decimals,
+        };
+      });
+
+    return balances;
   } catch (error) {
     console.error(`Error fetching balance for ${address}:`, error);
     throw error;
@@ -47,14 +67,22 @@ export const formatAddress = (address: string): string => {
 /**
  * Generate CSV content from accounts data
  */
-export const generateCsv = (accounts: { address: string; balance?: string }[]): string => {
-  // CSV header
-  let csvContent = "Address,Balance\n";
+export const generateCsv = (accounts: SuiAccount[]): string => {
+  // Get all unique coin symbols
+  const allSymbols = Array.from(new Set(
+    accounts.flatMap(account => account.balances.map(b => b.symbol))
+  )).sort();
+
+  // CSV header with all coin types
+  let csvContent = `Address,${allSymbols.join(',')}\n`;
   
   // Add each account as a row
   accounts.forEach(account => {
-    const balance = account.balance || "0.0000";
-    csvContent += `${account.address},${balance}\n`;
+    const balances = allSymbols.map(symbol => {
+      const coinBalance = account.balances.find(b => b.symbol === symbol);
+      return coinBalance ? coinBalance.balance : '0.0000';
+    });
+    csvContent += `${account.address},${balances.join(',')}\n`;
   });
   
   return csvContent;
